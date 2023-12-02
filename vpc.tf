@@ -1,61 +1,88 @@
 # VPC
-
 resource "aws_vpc" "default" {
-    cidr_block = "${var.vpc_cidr_block}"
+    cidr_block = "10.0.0.0/16"
 
-    tags {
+    tags = {
        Name = "wp-pvc-tf"
     }
 }
 
 # Internet Gateway
-
 resource "aws_internet_gateway" "default" {
-    vpc_id = "${aws_vpc.default.id}"
+    vpc_id = aws_vpc.default.id
 
-    tags {
+    tags = {
        Name = "wp-igw-tf"
     }
 }
 
-# Subnets
-
+# Public Subnet
 resource "aws_subnet" "wp-public-tf" {
-    vpc_id            = "${aws_vpc.default.id}"
-    cidr_block        = "${var.public_subnet_cidr_block}"
+    vpc_id            = aws_vpc.default.id
+    cidr_block        = "10.0.1.0/24"
     availability_zone = "us-west-2a"
 
-    tags {
+    tags = {
        Name = "wp-public-tf"
     }
 }
-
+#private subnets
 resource "aws_subnet" "wp-private-tf" {
-    vpc_id            = "${aws_vpc.default.id}"
-    cidr_block        = "${var.private_subnet_cidr_block}"
-    availability_zone = "us-west-2b"
+  for_each = toset(var.private_subnet_cidr_blocks)
 
-    tags {
-       Name = "wp-private-tf"
+  vpc_id            = aws_vpc.default.id
+  cidr_block        = each.value
+  availability_zone = lookup(zipmap(var.private_subnet_cidr_blocks, split(",", var.availability_zones)), each.value, null)
+
+  tags = {
+    Name = "wp-private-tf-${each.value}"
+  }
+
+    lifecycle {
+      ignore_changes = [tags]  # Ignore changes to tags
     }
 }
 
-# Route Tables
 
-resource "aws_route_table" "wp-rt-public-tf" {
-    vpc_id = "${aws_vpc.default.id}"
+# Route Tables
+resource "aws_route_table" "wp-rt-private-tf" {
+    vpc_id = aws_vpc.default.id
 
     route {
         cidr_block = "0.0.0.0/0"
-        gateway_id = "${aws_internet_gateway.default.id}"
+        gateway_id = aws_internet_gateway.default.id
     }
 
-    tags {
+    tags = {
+        Name = "wp-rt-private-tf"
+    }
+}
+
+# Route Table Associations
+# Route Table Associations
+resource "aws_route_table_association" "wp-private-tf" {
+    for_each       = aws_subnet.wp-private-tf
+    subnet_id      = each.value.id
+    route_table_id = aws_route_table.wp-rt-private-tf.id
+}
+
+
+# Route Tables for Public
+resource "aws_route_table" "wp-rt-public-tf" {
+    vpc_id = aws_vpc.default.id
+
+    route {
+        cidr_block = "0.0.0.0/0"
+        gateway_id = aws_internet_gateway.default.id
+    }
+
+    tags = {
        Name = "wp-rt-public-tf"
     }
 }
 
 resource "aws_route_table_association" "wp-public-tf" {
-    subnet_id = "${aws_subnet.wp-public-tf.id}"
-    route_table_id = "${aws_route_table.wp-rt-public-tf.id}"
+    count          = length(aws_subnet.wp-public-tf)
+    subnet_id      = aws_subnet.wp-public-tf.id
+    route_table_id = aws_route_table.wp-rt-public-tf.id
 }
